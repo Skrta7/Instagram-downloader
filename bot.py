@@ -6,17 +6,10 @@ import shutil
 import time
 import threading
 from queue import Queue
+import sqlite3
 
 # Initialize the bot with the token
-bot = TeleBot('7506752402:AAGCkbsKMzl11psl-CJrfAdGF_bmmLHKUtE')
-
-# Track started users
-started_users = []
-
-# Admins list (default admin ID included)
-admin_ids = [6235006088]
-# Banned users list
-banned_users = []
+bot = TeleBot('token')
 
 # Initialize Instaloader
 loader = instaloader.Instaloader()
@@ -26,30 +19,115 @@ download_semaphore = threading.Semaphore(3)
 # Queue to handle download requests
 download_queue = Queue()
 
+# Create or connect to the database
+conn = sqlite3.connect('bot_data.db', check_same_thread=False)
+cursor = conn.cursor()
+
+def init_db():
+
+    # Create tables if they don't exist
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY,
+            username TEXT
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS started_users (
+            id INTEGER PRIMARY KEY
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS admins (
+            id INTEGER PRIMARY KEY
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS banned_users (
+            id INTEGER PRIMARY KEY
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS admin_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_id INTEGER,
+            action TEXT,
+            target_id INTEGER,
+            timestamp TEXT
+        )
+    ''')
+    conn.commit()
+
+def log_action(admin_id, action, target_id=None):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute('INSERT INTO admin_logs (admin_id, action, target_id, timestamp) VALUES (?, ?, ?, ?)', 
+                (admin_id, action, target_id, timestamp))
+    conn.commit()
+
+def add_user(user_id, username):
+    cursor.execute('INSERT OR IGNORE INTO users (id, username) VALUES (?, ?)', (user_id, username)) 
+    conn.commit()
+
+def add_admin(admin_id, by_admin):
+    cursor.execute('INSERT OR IGNORE INTO admins (id) VALUES (?)', (admin_id,))
+    log_action(by_admin, "Add Admin", admin_id)
+    conn.commit()
+
+def remove_admin(admin_id, by_admin):
+    # Remove from the admins table and log the action
+    cursor.execute('DELETE FROM admins WHERE id = ?', (admin_id,))
+    log_action(by_admin, "Remove Admin", admin_id)
+    conn.commit()
+
 # Command to display the list of admins
 @bot.message_handler(commands=['admins'])
 def list_admins(message: types.Message):
-    if message.from_user.id in admin_ids:
-        if admin_ids:
-            admins_list = "\n".join([str(admin_id) for admin_id in admin_ids])
+    # Check if the user is an admin by querying the database
+    cursor.execute("SELECT id FROM admins WHERE id = ?", (message.from_user.id,))
+    admin_check = cursor.fetchone()
+
+    if admin_check:
+        # Query the database to retrieve the list of admins
+        cursor.execute("SELECT id FROM admins")
+        admins = cursor.fetchall()
+        
+        if admins:
+            admins_list = "\n".join([str(admin[0]) for admin in admins])
             bot.reply_to(message, f"👥 لیست ادمین‌ها:\n{admins_list}")
         else:
             bot.reply_to(message, "⚠️ لیست ادمین‌ها خالی است.")
+        
+        # Log the action of viewing the admin list
+        log_action(message.from_user.id, "View Admin List")
     else:
         bot.reply_to(message, "⛔ شما دسترسی ادمین ندارید.")
 
+
 # Command to remove an admin
 @bot.message_handler(commands=['removeadmin'])
-def remove_admin(message: types.Message):
-    if message.from_user.id in admin_ids:
+def remove_admin_command(message: types.Message):
+    # Check if the user is an admin by querying the database
+    cursor.execute("SELECT id FROM admins WHERE id = ?", (message.from_user.id,))
+    admin_check = cursor.fetchone()
+
+    if admin_check:
         try:
             remove_admin_id = int(message.text.split()[1])
-            if remove_admin_id in admin_ids:
+            # Check if the admin to be removed exists in the database
+            cursor.execute("SELECT id FROM admins WHERE id = ?", (remove_admin_id,))
+            admin_exists = cursor.fetchone()
+
+            if admin_exists:
                 # Prevent removing the last admin or oneself
                 if remove_admin_id == message.from_user.id:
                     bot.reply_to(message, "⚠️ نمی‌توانید خودتان را از ادمین‌ها حذف کنید.")
                 else:
-                    admin_ids.remove(remove_admin_id)
+                    # Remove from database
+                    remove_admin(remove_admin_id, message.from_user.id)
                     bot.reply_to(message, f"❌ کاربر {remove_admin_id} از لیست ادمین‌ها حذف شد.")
             else:
                 bot.reply_to(message, "⚠️ این کاربر در لیست ادمین‌ها نیست.")
@@ -61,12 +139,21 @@ def remove_admin(message: types.Message):
 
 # Command to add admin
 @bot.message_handler(commands=['addadmin'])
-def add_admin(message: types.Message):
-    if message.from_user.id in admin_ids:
+def add_admin_command(message: types.Message):
+    # Check if the user is an admin by querying the database
+    cursor.execute("SELECT id FROM admins WHERE id = ?", (message.from_user.id,))
+    admin_check = cursor.fetchone()
+
+    if admin_check:
         try:
             new_admin_id = int(message.text.split()[1])
-            if new_admin_id not in admin_ids:
-                admin_ids.append(new_admin_id)
+
+            # Check if the new admin already exists in the database
+            cursor.execute("SELECT id FROM admins WHERE id = ?", (new_admin_id,))
+            existing_admin = cursor.fetchone()
+
+            if existing_admin is None:  # If the user is not already an admin
+                add_admin(new_admin_id, message.from_user.id)  # Register in database
                 bot.reply_to(message, f"✅ کاربر {new_admin_id} به ادمین‌ها اضافه شد.")
             else:
                 bot.reply_to(message, "⚠️ این کاربر قبلاً ادمین بوده است.")
@@ -75,87 +162,172 @@ def add_admin(message: types.Message):
     else:
         bot.reply_to(message, "⛔ شما دسترسی ادمین ندارید.")
 
+
+@bot.message_handler(commands=['adminlogs'])
+def show_admin_logs(message: types.Message):
+    if message.from_user.id == 6235006088:
+        cursor.execute('SELECT * FROM admin_logs ORDER BY timestamp DESC LIMIT 10')
+        logs = cursor.fetchall()
+        log_text = "\n".join([f"{log[3]} - Admin {log[1]}: {log[2]} (Target: {log[2]})" for log in logs])
+        bot.reply_to(message, f"📜 لاگ‌های اخیر ادمین:\n\n{log_text}")
+    else:
+        bot.reply_to(message, "⛔ شما دسترسی ادمین ندارید.")
+
+
 # Command to ban user
 @bot.message_handler(commands=['ban'])
 def ban_user(message: types.Message):
-    if message.from_user.id in admin_ids:
+    # Check if the user is an admin by querying the database
+    cursor.execute("SELECT id FROM admins WHERE id = ?", (message.from_user.id,))
+    admin_check = cursor.fetchone()
+
+    if admin_check:
         try:
             user_id = int(message.text.split()[1])
-            if user_id not in banned_users:
-                banned_users.append(user_id)
-                bot.reply_to(message, f"🚫 کاربر {user_id} بن شد.")
-            else:
+            
+            # Check if the user is already banned
+            cursor.execute("SELECT id FROM banned_users WHERE id = ?", (user_id,))
+            if cursor.fetchone():
                 bot.reply_to(message, "⚠️ این کاربر قبلاً بن شده است.")
+            else:
+                # Add user to banned_users table in the database
+                cursor.execute("INSERT INTO banned_users (id) VALUES (?)", (user_id,))
+                conn.commit()
+                bot.reply_to(message, f"🚫 کاربر {user_id} بن شد.")
+                
+                # Log the ban action
+                log_action(message.from_user.id, f"Banned user {user_id}")
+                
         except (IndexError, ValueError):
             bot.reply_to(message, "⚠️ دستور اشتباه است. لطفاً آیدی عددی کاربر را وارد کنید.")
     else:
         bot.reply_to(message, "⛔ شما دسترسی ادمین ندارید.")
+
 
 # Command to unban user
 @bot.message_handler(commands=['unban'])
 def unban_user(message: types.Message):
-    if message.from_user.id in admin_ids:
+    # Check if the user is an admin by querying the database
+    cursor.execute("SELECT id FROM admins WHERE id = ?", (message.from_user.id,))
+    admin_check = cursor.fetchone()
+
+    if admin_check:
         try:
             user_id = int(message.text.split()[1])
-            if user_id in banned_users:
-                banned_users.remove(user_id)
+
+            # Check if the user is banned
+            cursor.execute("SELECT id FROM banned_users WHERE id = ?", (user_id,))
+            if cursor.fetchone():
+                # Remove user from banned_users table in the database
+                cursor.execute("DELETE FROM banned_users WHERE id = ?", (user_id,))
+                conn.commit()
                 bot.reply_to(message, f"✅ کاربر {user_id} آنبن شد.")
+
+                # Log the unban action
+                log_action(message.from_user.id, f"Unbanned user {user_id}")
             else:
                 bot.reply_to(message, "⚠️ این کاربر بن نیست.")
+                
         except (IndexError, ValueError):
             bot.reply_to(message, "⚠️ دستور اشتباه است. لطفاً آیدی عددی کاربر را وارد کنید.")
     else:
         bot.reply_to(message, "⛔ شما دسترسی ادمین ندارید.")
 
+
 # Command to broadcast message
 @bot.message_handler(commands=['broadcast'])
 def broadcast_message(message: types.Message):
-    if message.from_user.id in admin_ids:
-        broadcast_text = message.text.split(maxsplit=1)[1]
-        for user_id in started_users:
-            if user_id not in banned_users:
+    # Check if the user is an admin by querying the database
+    cursor.execute("SELECT id FROM admins WHERE id = ?", (message.from_user.id,))
+    admin_check = cursor.fetchone()
+
+    if admin_check:
+        try:
+            broadcast_text = message.text.split(maxsplit=1)[1]
+            sent_count = 0  # Counter for successfully sent messages
+
+            # Query to get all started users who are not banned
+            cursor.execute("SELECT id FROM started_users WHERE id NOT IN (SELECT id FROM banned_users)")
+            active_users = cursor.fetchall()
+
+            for user in active_users:
+                user_id = user[0]
                 bot.send_message(user_id, f"📢 Announcement\n\n{broadcast_text}")
-        bot.reply_to(message, "✅ پیام همگانی ارسال شد.")
+                sent_count += 1
+
+            bot.reply_to(message, f"✅ پیام همگانی به {sent_count} کاربر ارسال شد.")
+
+            # Log the broadcast action
+            log_action(message.from_user.id, f"Broadcasted message: {broadcast_text[:50]}... to {sent_count} users")
+        
+        except IndexError:
+            bot.reply_to(message, "⚠️ دستور اشتباه است. لطفاً متن پیام را وارد کنید.")
     else:
         bot.reply_to(message, "⛔ شما دسترسی ادمین ندارید.")
+
+
 
 # Function for sending message to a specific user
 @bot.message_handler(commands=['send'])
 def send_message_to_user(message: types.Message):
-    if message.from_user.id in admin_ids:
+    # Check if the user is an admin by querying the database
+    cursor.execute("SELECT id FROM admins WHERE id = ?", (message.from_user.id,))
+    admin_check = cursor.fetchone()
+
+    if admin_check:
         try:
             user_id = int(message.text.split()[1])
             text = message.text.split(maxsplit=2)[2]
-            if user_id in started_users and user_id not in banned_users:
+
+            # Check if user exists and is not banned
+            cursor.execute("SELECT id FROM started_users WHERE id = ? AND id NOT IN (SELECT id FROM banned_users)", (user_id,))
+            user_check = cursor.fetchone()
+
+            if user_check:
                 bot.send_message(user_id, f"📬 پیام از ادمین:\n\n{text}")
                 bot.reply_to(message, f"✅ پیام به کاربر {user_id} ارسال شد.")
+
+                # Log the send action
+                log_action(message.from_user.id, f"Sent message to user {user_id}: {text[:50]}...")
             else:
                 bot.reply_to(message, "⚠️ کاربر موردنظر وجود ندارد یا بن شده است.")
-        except (IndexError, ValueError):
+        except IndexError:
             bot.reply_to(message, "⚠️ دستور اشتباه است. لطفاً آیدی عددی و پیام را وارد کنید.")
+        except ValueError:
+            bot.reply_to(message, "⚠️ آیدی کاربر باید عددی باشد.")
     else:
         bot.reply_to(message, "⛔ شما دسترسی ادمین ندارید.")
-
+add_admin(6235006088, 6235006088)
 # Command handler for /start
 @bot.message_handler(commands=['start'])
 def handle_start_command(message: types.Message):
-    if message.from_user.id in banned_users:
+    # Check if the user is banned
+    cursor.execute("SELECT id FROM banned_users WHERE id = ?", (message.from_user.id,))
+    if cursor.fetchone():
         bot.reply_to(message, "⛔ شما دسترسی استفاده از این ربات را ندارید.")
         return
+
     user_name = message.from_user.first_name
     welcome_text = f"سلام {user_name} عزیز! 👋\n" \
                    f"لطفاً لینک پست اینستاگرامی که می‌خواهید را ارسال کنید تا ویدیو را برای شما بفرستم. 📲"
-    
+
     # Inline buttons
     button_about = types.InlineKeyboardButton("درباره ما 🧑‍💼", callback_data="about")
     button_help = types.InlineKeyboardButton("راهنما 🆘", callback_data="help")
     markup = types.InlineKeyboardMarkup().add(button_about, button_help)
-    
+
     bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
-    
+
     # Add user to started list if not already there
-    if message.chat.id not in started_users:
-        started_users.append(message.chat.id)
+    cursor.execute("SELECT id FROM started_users WHERE id = ?", (message.from_user.id,))
+    if not cursor.fetchone():
+        cursor.execute("INSERT INTO started_users (id) VALUES (?)", (message.from_user.id,))
+        conn.commit()
+
+        # Log the user start action
+        log_action(message.from_user.id, "User started the bot.")
+
+
 
 
 # Function to download the Instagram reel and handle response
@@ -211,6 +383,12 @@ def handle_incoming_messages(message: types.Message):
             # Send the description if available
             if description:
                 bot.send_message(message.chat.id, f"📝 توضیحات:\n\n{description}")
+            
+            # Add "ارسال گزارش" button
+            report_button = types.InlineKeyboardButton("ارسال گزارش 🐞", callback_data="report")
+            markup = types.InlineKeyboardMarkup().add(report_button)
+            bot.send_message(message.chat.id, "آیا می‌خواهید گزارشی ارسال کنید؟", reply_markup=markup)
+        
         else:
             bot.reply_to(message, '❌ دانلود ویدیو با خطا مواجه شد. لطفاً لینک را بررسی کنید یا بعداً دوباره امتحان کنید.')
         
@@ -218,6 +396,7 @@ def handle_incoming_messages(message: types.Message):
         shutil.rmtree(unique_folder)
     else:
         bot.reply_to(message, '🚫 لطفاً یک لینک معتبر اینستاگرامی ارسال کنید.')
+
 
 # Handle callback queries
 @bot.callback_query_handler(func=lambda call: True)
@@ -244,5 +423,6 @@ def process_bug_report(message: types.Message):
     bot.reply_to(message, 'گزارش شما با موفقیت ثبت شد! 🙏 ممنون از همکاری شما!')
 
 # Start the bot
+init_db()
 print('🤖 Bot started and running...')
 bot.infinity_polling()
