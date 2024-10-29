@@ -26,6 +26,39 @@ download_semaphore = threading.Semaphore(3)
 # Queue to handle download requests
 download_queue = Queue()
 
+# Command to display the list of admins
+@bot.message_handler(commands=['admins'])
+def list_admins(message: types.Message):
+    if message.from_user.id in admin_ids:
+        if admin_ids:
+            admins_list = "\n".join([str(admin_id) for admin_id in admin_ids])
+            bot.reply_to(message, f"👥 لیست ادمین‌ها:\n{admins_list}")
+        else:
+            bot.reply_to(message, "⚠️ لیست ادمین‌ها خالی است.")
+    else:
+        bot.reply_to(message, "⛔ شما دسترسی ادمین ندارید.")
+
+# Command to remove an admin
+@bot.message_handler(commands=['removeadmin'])
+def remove_admin(message: types.Message):
+    if message.from_user.id in admin_ids:
+        try:
+            remove_admin_id = int(message.text.split()[1])
+            if remove_admin_id in admin_ids:
+                # Prevent removing the last admin or oneself
+                if remove_admin_id == message.from_user.id:
+                    bot.reply_to(message, "⚠️ نمی‌توانید خودتان را از ادمین‌ها حذف کنید.")
+                else:
+                    admin_ids.remove(remove_admin_id)
+                    bot.reply_to(message, f"❌ کاربر {remove_admin_id} از لیست ادمین‌ها حذف شد.")
+            else:
+                bot.reply_to(message, "⚠️ این کاربر در لیست ادمین‌ها نیست.")
+        except (IndexError, ValueError):
+            bot.reply_to(message, "⚠️ دستور اشتباه است. لطفاً آیدی عددی کاربر را وارد کنید.")
+    else:
+        bot.reply_to(message, "⛔ شما دسترسی ادمین ندارید.")
+
+
 # Command to add admin
 @bot.message_handler(commands=['addadmin'])
 def add_admin(message: types.Message):
