@@ -9,7 +9,7 @@ from queue import Queue
 import sqlite3
 
 # Initialize the bot with the token
-bot = TeleBot('7506752402:AAGCkbsKMzl11psl-CJrfAdGF_bmmLHKUtE')
+bot = TeleBot('toekn')
 
 # Initialize Instaloader
 loader = instaloader.Instaloader()
