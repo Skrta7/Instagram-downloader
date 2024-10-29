@@ -9,7 +9,7 @@ from queue import Queue
 import sqlite3
 
 # Initialize the bot with the token
-bot = TeleBot('token')
+bot = TeleBot('7506752402:AAGCkbsKMzl11psl-CJrfAdGF_bmmLHKUtE')
 
 # Initialize Instaloader
 loader = instaloader.Instaloader()
@@ -297,7 +297,7 @@ def send_message_to_user(message: types.Message):
             bot.reply_to(message, "⚠️ آیدی کاربر باید عددی باشد.")
     else:
         bot.reply_to(message, "⛔ شما دسترسی ادمین ندارید.")
-add_admin(6235006088, 6235006088)
+
 # Command handler for /start
 @bot.message_handler(commands=['start'])
 def handle_start_command(message: types.Message):
