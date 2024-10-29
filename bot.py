@@ -3,55 +3,71 @@ import json
 import os
 
 # Initialize the bot with the token
-bot = TeleBot('7506752402:AAGCkbsKMzl11psl-CJrfAdGF_bmmLHKUtE')
+bot = TeleBot('token')
 
-# Global variable to track started users
-started = []
+# Track started users
+started_users = []
 
 # Command handler for /start
 @bot.message_handler(commands=['start'])
-def welcome(message: types.Message):
-    name = message.from_user.first_name
-    text = f'سلام {name} عزیز! لطفاً لینک پست اینستاگرامی که می‌خواهید را ارسال کنید تا ویدیو را برای شما ارسال کنم.'
-    button_about = types.InlineKeyboardButton("About Us", callback_data="about")
-    button_help = types.InlineKeyboardButton("Help", callback_data="help")
-    markup = types.InlineKeyboardMarkup()
-    markup.add(button_about, button_help)
-    bot.send_message(message.chat.id, text, reply_markup=markup)
-    if message.chat.id not in started:
-        started.append(message.chat.id)
+def handle_start_command(message: types.Message):
+    user_name = message.from_user.first_name
+    welcome_text = f"سلام {user_name} عزیز! 👋\n" \
+                   f"لطفاً لینک پست اینستاگرامی که می‌خواهید را ارسال کنید تا ویدیو را برای شما بفرستم. 📲"
+    
+    # Inline buttons
+    button_about = types.InlineKeyboardButton("درباره ما 🧑‍💼", callback_data="about")
+    button_help = types.InlineKeyboardButton("راهنما 🆘", callback_data="help")
+    markup = types.InlineKeyboardMarkup().add(button_about, button_help)
+    
+    bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
+    
+    # Add user to started list if not already there
+    if message.chat.id not in started_users:
+        started_users.append(message.chat.id)
 
-# Handler for incoming messages
-@bot.message_handler(func=lambda m: True)
-def send_video(message: types.Message):
+# Handle messages for Instagram links
+@bot.message_handler(func=lambda message: True)
+def handle_incoming_messages(message: types.Message):
     if message.text.startswith('https://www.instagram.com'):
-        link = message.text[12:]
-        link = f"www.dd{link}"
-        channel = types.InlineKeyboardButton('کانال کتیستا', url='https://t.me/CatIstaChannel')
-        report = types.InlineKeyboardButton('گزارش باگ', callback_data='report')
-        btn = types.InlineKeyboardMarkup(row_width=2).add(channel, report)
-        bot.send_message(message.chat.id, f'<a href="{link}">⁪</a>', parse_mode='HTML', reply_markup=btn)
+        # Modify link for demonstration purposes
+        sanitized_link = "www.dd" + message.text[12:]
+        
+        # Inline buttons
+        button_channel = types.InlineKeyboardButton('کانال ما 📢', url='https://t.me/CodeCyborg')
+        button_report = types.InlineKeyboardButton('گزارش باگ 🐞', callback_data='report')
+        markup = types.InlineKeyboardMarkup(row_width=2).add(button_channel, button_report)
+        
+        # Send link with reply buttons
+        bot.send_message(message.chat.id, f'<a href="{sanitized_link}"> ⁪ </a>', parse_mode='HTML', reply_markup=markup)
     else:
-        bot.reply_to(message, 'لطفاً یک لینک معتبر اینستاگرامی ارسال کنید.')
+        bot.reply_to(message, '🚫 لطفاً یک لینک معتبر اینستاگرامی ارسال کنید.')
 
-# Callback query handler
+# Handle callback queries
 @bot.callback_query_handler(func=lambda call: True)
-def get_call(call: types.CallbackQuery):
+def handle_callback_queries(call: types.CallbackQuery):
     if call.data == 'report':
-        bot.answer_callback_query(call.id, 'شما در حال گزارش باگ هستید.')
-        report_message = bot.send_message(call.message.chat.id, 'لطفاً دلیل گزارش خود را بنویسید:')
-        bot.register_next_step_handler(report_message, get_report)
+        bot.answer_callback_query(call.id, 'در حال گزارش باگ... 🐞')
+        prompt_text = "لطفاً دلیل گزارش خود را بنویسید:"
+        report_message = bot.send_message(call.message.chat.id, prompt_text)
+        bot.register_next_step_handler(report_message, process_bug_report)
     elif call.data == "about":
-        bot.send_message(call.id, 'This is About Page')
+        about_text = "این یک ربات برای دریافت ویدیوهای اینستاگرام است! 🧐\nما اینجا هستیم تا کمک کنیم."
+        bot.send_message(call.message.chat.id, about_text)
     elif call.data == "help":
-        bot.send_message(call.id, 'this is help')
+        help_text = "برای استفاده از ربات، کافیست لینک پست اینستاگرام خود را ارسال کنید. 📩"
+        bot.send_message(call.message.chat.id, help_text)
 
-# Function to handle report messages
-def get_report(message: types.Message):
-    text = message.text
-    bot.send_message(6235006088, f"گزارش جدید:\n{text}\n\nChat ID: {message.chat.id}\n\nUser ID: {message.from_user.username}")
-    bot.reply_to(message, 'گزارش شما با موفقیت ثبت شد. ممنون از شما!')
+# Process bug report messages
+def process_bug_report(message: types.Message):
+    report_content = message.text
+    admin_chat_id = 6235006088  # Replace with your admin chat ID
+    report_message = f"گزارش جدید دریافت شد! ⚠️\n\n📝 گزارش: {report_content}\n👤 کاربر: {message.from_user.username}\n🆔 Chat ID: {message.chat.id}"
+    
+    # Send the report to admin and confirm with the user
+    bot.send_message(admin_chat_id, report_message)
+    bot.reply_to(message, 'گزارش شما با موفقیت ثبت شد! 🙏 ممنون از همکاری شما!')
 
 # Start the bot
-print('Bot started')
+print('🤖 Bot started and running...')
 bot.infinity_polling()
