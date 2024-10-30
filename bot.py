@@ -9,7 +9,7 @@ from queue import Queue
 import sqlite3
 
 # Initialize the bot with the token
-bot = TeleBot('toekn')
+bot = TeleBot('token')
 
 # Initialize Instaloader
 loader = instaloader.Instaloader()
@@ -23,8 +23,73 @@ download_queue = Queue()
 conn = sqlite3.connect('bot_data.db', check_same_thread=False)
 cursor = conn.cursor()
 
-def init_db():
+# شناسه‌های کانال‌ها
+required_channels = ['@CodeCyborg']
 
+def check_membership(user_id):
+    # بررسی عضویت در همه کانال‌های مورد نظر
+    for channel in required_channels:
+        try:
+            member_status = bot.get_chat_member(channel, user_id)
+            if member_status.status not in ['member', 'administrator', 'creator']:
+                return False
+        except Exception:
+            return False
+    return True
+
+def send_join_channels_message(user_id):
+    join_text = "⚠️ برای استفاده از ربات، ابتدا باید در کانال‌های زیر عضو شوید:"
+    markup = types.InlineKeyboardMarkup()
+    for channel in required_channels:
+        button = types.InlineKeyboardButton(f"عضویت در {channel}", url=f"https://t.me/{channel[1:]}")
+        markup.add(button)
+    check_button = types.InlineKeyboardButton("بررسی عضویت ✅", callback_data="check_membership")
+    markup.add(check_button)
+    bot.send_message(user_id, join_text, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data == "check_membership")
+def callback_check_membership(call):
+    user_id = call.from_user.id
+    if check_membership(user_id):
+        bot.answer_callback_query(call.id, "✅ عضویت شما تایید شد!")
+        # فراخوانی مستقیم دستور استارت بدون ارسال پیام به کاربر
+        handle_start_command(call.message)
+        
+    else:
+        bot.answer_callback_query(call.id, "❌ هنوز در همه کانال‌ها عضو نشده‌اید. لطفاً ابتدا عضو شوید.")
+
+# Command handler for /start
+@bot.message_handler(commands=['start'])
+def handle_start_command(message: types.Message):
+    user_id = message.from_user.id
+    if check_membership(user_id):
+        # Check if the user is banned
+        cursor.execute("SELECT id FROM banned_users WHERE id = ?", (message.from_user.id,))
+        if cursor.fetchone():
+            bot.reply_to(message, "⛔ شما دسترسی استفاده از این ربات را ندارید.")
+            return
+        welcome_text = f"درود دوست عزیز! 👋\n" \
+                    f"لطفاً لینک پست اینستاگرامی که می‌خواهید را ارسال کنید تا ویدیو را برای شما بفرستم. 📲"
+
+        # Inline buttons
+        button_about = types.InlineKeyboardButton("درباره ما 🧑‍💼", callback_data="about")
+        button_help = types.InlineKeyboardButton("راهنما 🆘", callback_data="help")
+        markup = types.InlineKeyboardMarkup().add(button_about, button_help)
+
+        bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
+
+        # Add user to started list if not already there
+        cursor.execute("SELECT id FROM started_users WHERE id = ?", (message.from_user.id,))
+        if not cursor.fetchone():
+            cursor.execute("INSERT INTO started_users (id) VALUES (?)", (message.from_user.id,))
+            conn.commit()
+
+            # Log the user start action
+            log_action(message.from_user.id, "User started the bot.")
+    else:
+        send_join_channels_message(user_id)
+
+def init_db():
     # Create tables if they don't exist
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
@@ -273,7 +338,6 @@ def send_message_to_user(message: types.Message):
     # Check if the user is an admin by querying the database
     cursor.execute("SELECT id FROM admins WHERE id = ?", (message.from_user.id,))
     admin_check = cursor.fetchone()
-
     if admin_check:
         try:
             user_id = int(message.text.split()[1])
@@ -297,38 +361,6 @@ def send_message_to_user(message: types.Message):
             bot.reply_to(message, "⚠️ آیدی کاربر باید عددی باشد.")
     else:
         bot.reply_to(message, "⛔ شما دسترسی ادمین ندارید.")
-
-# Command handler for /start
-@bot.message_handler(commands=['start'])
-def handle_start_command(message: types.Message):
-    # Check if the user is banned
-    cursor.execute("SELECT id FROM banned_users WHERE id = ?", (message.from_user.id,))
-    if cursor.fetchone():
-        bot.reply_to(message, "⛔ شما دسترسی استفاده از این ربات را ندارید.")
-        return
-
-    user_name = message.from_user.first_name
-    welcome_text = f"سلام {user_name} عزیز! 👋\n" \
-                   f"لطفاً لینک پست اینستاگرامی که می‌خواهید را ارسال کنید تا ویدیو را برای شما بفرستم. 📲"
-
-    # Inline buttons
-    button_about = types.InlineKeyboardButton("درباره ما 🧑‍💼", callback_data="about")
-    button_help = types.InlineKeyboardButton("راهنما 🆘", callback_data="help")
-    markup = types.InlineKeyboardMarkup().add(button_about, button_help)
-
-    bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
-
-    # Add user to started list if not already there
-    cursor.execute("SELECT id FROM started_users WHERE id = ?", (message.from_user.id,))
-    if not cursor.fetchone():
-        cursor.execute("INSERT INTO started_users (id) VALUES (?)", (message.from_user.id,))
-        conn.commit()
-
-        # Log the user start action
-        log_action(message.from_user.id, "User started the bot.")
-
-
-
 
 # Function to download the Instagram reel and handle response
 def download_instagram_reel(url, unique_folder):
@@ -426,3 +458,5 @@ def process_bug_report(message: types.Message):
 init_db()
 print('🤖 Bot started and running...')
 bot.infinity_polling()
+
+# | Coded By: Arash | Telegram: @CodeCyborg | Instagram: arash.rahbar83 |
